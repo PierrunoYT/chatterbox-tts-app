@@ -1,0 +1,10 @@
+transformers
+accelerate
+diffusers
+gradio
+devicetorch
+chatterbox-tts
+scipy
+librosa
+accelerate
+peft
