@@ -1,6 +1,8 @@
 import gradio as gr
 import torchaudio as ta
 from chatterbox.tts import ChatterboxTTS
+from chatterbox.tts_turbo import ChatterboxTurboTTS
+from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 import devicetorch
 import torch
 import os
@@ -16,36 +18,79 @@ output_dir.mkdir(exist_ok=True)
 device = devicetorch.get(torch)
 print(f"Using device: {device}")
 
-# Load the Chatterbox TTS model
-print("Loading Chatterbox TTS model...")
+# Load all Chatterbox TTS models
+print("Loading Chatterbox TTS models...")
+models = {}
 try:
-    model = ChatterboxTTS.from_pretrained(device=device)
-    print("✅ Model loaded successfully!")
+    print("Loading Chatterbox-Turbo...")
+    models['turbo'] = ChatterboxTurboTTS.from_pretrained(device=device)
+    print("✅ Turbo model loaded!")
 except Exception as e:
-    print(f"❌ Error loading model: {e}")
-    model = None
+    print(f"⚠️ Turbo model failed: {e}")
+    models['turbo'] = None
 
-def generate_speech(text, reference_audio, exaggeration, cfg_value, output_filename):
+try:
+    print("Loading Chatterbox-Multilingual...")
+    models['multilingual'] = ChatterboxMultilingualTTS.from_pretrained(device=device)
+    print("✅ Multilingual model loaded!")
+except Exception as e:
+    print(f"⚠️ Multilingual model failed: {e}")
+    models['multilingual'] = None
+
+try:
+    print("Loading Chatterbox (Original)...")
+    models['original'] = ChatterboxTTS.from_pretrained(device=device)
+    print("✅ Original model loaded!")
+except Exception as e:
+    print(f"⚠️ Original model failed: {e}")
+    models['original'] = None
+
+if not any(models.values()):
+    print("❌ No models loaded successfully!")
+else:
+    print("✅ Models ready!")
+
+def generate_speech(model_choice, text, reference_audio, exaggeration, cfg_value, language_code, output_filename):
     """Generate speech using Chatterbox TTS"""
+    if not any(models.values()):
+        return None, "❌ No models loaded. Please check the installation."
+    
+    # Map model choice to model key
+    model_map = {
+        "Chatterbox-Turbo (Fastest, English only)": 'turbo',
+        "Chatterbox-Multilingual (23+ Languages)": 'multilingual',
+        "Chatterbox-Original (Best Quality)": 'original'
+    }
+    
+    model_key = model_map.get(model_choice)
+    model = models.get(model_key)
+    
     if model is None:
-        return None, "❌ Model not loaded. Please check the installation."
+        return None, f"❌ {model_choice} not loaded. Try another model."
     
     if not text or not text.strip():
         return None, "❌ Please enter some text to convert to speech."
     
     try:
-        print(f"Generating speech for: {text[:50]}...")
+        print(f"Generating speech with {model_choice} for: {text[:50]}...")
         
         # Prepare parameters
-        params = {
-            "exaggeration": exaggeration,
-            "cfg_weight": cfg_value
-        }
+        params = {}
+        
+        # Turbo model doesn't use exaggeration/cfg_weight
+        if model_key != 'turbo':
+            params["exaggeration"] = exaggeration
+            params["cfg_weight"] = cfg_value
         
         # Add reference audio if provided
         if reference_audio is not None:
             params["audio_prompt_path"] = reference_audio
             print(f"Using voice cloning with reference audio: {reference_audio}")
+        
+        # Add language for multilingual model
+        if model_key == 'multilingual' and language_code and language_code != "auto":
+            params["language_id"] = language_code
+            print(f"Using language: {language_code}")
         
         # Generate speech
         wav = model.generate(text, **params)
@@ -53,7 +98,7 @@ def generate_speech(text, reference_audio, exaggeration, cfg_value, output_filen
         # Create output filename
         if not output_filename:
             timestamp = int(time.time())
-            output_filename = f"chatterbox_output_{timestamp}.wav"
+            output_filename = f"chatterbox_{model_key}_{timestamp}.wav"
         
         if not output_filename.endswith('.wav'):
             output_filename += '.wav'
@@ -63,7 +108,7 @@ def generate_speech(text, reference_audio, exaggeration, cfg_value, output_filen
         ta.save(str(output_path), wav, model.sr)
         
         print(f"✅ Speech generated successfully: {output_path}")
-        return str(output_path), f"✅ Speech generated successfully!\nSaved as: {output_filename}"
+        return str(output_path), f"✅ Speech generated successfully with {model_choice}!\nSaved as: {output_filename}"
         
     except Exception as e:
         error_msg = f"❌ Error generating speech: {str(e)}"
@@ -123,15 +168,68 @@ with gr.Blocks(
         with gr.TabItem("🎤 Text-to-Speech"):
             with gr.Row():
                 with gr.Column(scale=1):
+                    gr.Markdown("### ⚡ Model Selection")
+                    model_selector = gr.Dropdown(
+                        choices=[
+                            "Chatterbox-Turbo (Fastest, English only)",
+                            "Chatterbox-Multilingual (23+ Languages)",
+                            "Chatterbox-Original (Best Quality)"
+                        ],
+                        value="Chatterbox-Turbo (Fastest, English only)",
+                        label="Choose Model",
+                        info="Turbo = fastest, Multilingual = 23+ languages, Original = best quality"
+                    )
+                    
                     gr.Markdown("### 📝 Input Text")
                     text_input = gr.Textbox(
                         label="Text to Convert",
-                        placeholder="Enter the text you want to convert to speech...",
+                        placeholder="Enter text... For Turbo: try adding [laugh], [chuckle], [cough], [sigh] for realism!",
                         lines=5,
                         max_lines=10
                     )
                     
+                    gr.Markdown(
+                        """
+                        🎭 **Turbo Model Tags**: `[laugh]`, `[chuckle]`, `[cough]`, `[sigh]`
+                        
+                        Example: *"Hi there! [chuckle] Let me tell you something funny."*
+                        """
+                    )
+                    gr.Markdown("### 🌍 Language (Multilingual Model Only)")
+                    language_selector = gr.Dropdown(
+                        choices=[
+                            ("Auto-detect", "auto"),
+                            ("Arabic (العربية)", "ar"),
+                            ("Chinese (中文)", "zh"),
+                            ("Danish (Dansk)", "da"),
+                            ("Dutch (Nederlands)", "nl"),
+                            ("English", "en"),
+                            ("Finnish (Suomi)", "fi"),
+                            ("French (Français)", "fr"),
+                            ("German (Deutsch)", "de"),
+                            ("Greek (Ελληνικά)", "el"),
+                            ("Hebrew (עברית)", "he"),
+                            ("Hindi (हिन्दी)", "hi"),
+                            ("Italian (Italiano)", "it"),
+                            ("Japanese (日本語)", "ja"),
+                            ("Korean (한국어)", "ko"),
+                            ("Malay (Bahasa Melayu)", "ms"),
+                            ("Norwegian (Norsk)", "no"),
+                            ("Polish (Polski)", "pl"),
+                            ("Portuguese (Português)", "pt"),
+                            ("Russian (Русский)", "ru"),
+                            ("Spanish (Español)", "es"),
+                            ("Swedish (Svenska)", "sv"),
+                            ("Swahili (Kiswahili)", "sw"),
+                            ("Turkish (Türkçe)", "tr"),
+                        ],
+                        value="auto",
+                        label="Language Code",
+                        info="Select language for multilingual model (auto-detect if not specified)"
+                    )
+                    
                     gr.Markdown("### 🎨 Voice Settings")
+                    gr.Markdown("💡 *Note: Exaggeration and CFG controls don't apply to Turbo model*")
                     with gr.Row():
                         exaggeration = gr.Slider(
                             minimum=0.0,
@@ -190,6 +288,22 @@ with gr.Blocks(
         # Examples Tab
         with gr.TabItem("📚 Examples & Tips"):
             gr.Markdown("""
+            ## ⚡ Chatterbox-Turbo Paralinguistic Tags
+            
+            Add natural vocal expressions to your speech:
+            
+            | Tag | Effect | Example Usage |
+            |-----|--------|---------------|
+            | `[laugh]` | Full laughter | "That's hilarious! [laugh]" |
+            | `[chuckle]` | Light laugh | "Well, [chuckle] that's interesting." |
+            | `[cough]` | Cough sound | "[cough] Excuse me, as I was saying..." |
+            | `[sigh]` | Sighing | "[sigh] It's been a long day." |
+            
+            ### Turbo Example Texts:
+            - "Hi there, Sarah here from MochaFone [chuckle], do you have a minute?"
+            - "Let me tell you something funny [laugh] you won't believe this!"
+            - "[sigh] I've been working on this all day, but it's finally done."
+            
             ## 🎯 Voice Cloning Tips
             
             ### For Best Results:
@@ -199,20 +313,31 @@ with gr.Blocks(
             - **Content**: Single speaker, natural speaking style
             - **Microphone**: Professional microphone recommended
             
-            ### Example Texts:
+            ### General Example Texts:
             - "Hello, this is a test of the Chatterbox text-to-speech system."
             - "The quick brown fox jumps over the lazy dog."
             - "Welcome to our AI-powered voice synthesis demonstration."
             
-            ### Emotion Control:
+            ### Multilingual Examples:
+            - **French**: "Bonjour, comment ça va? Ceci est un test."
+            - **Spanish**: "Hola, ¿cómo estás? Esta es una prueba."
+            - **Chinese**: "你好，今天天气真不错。"
+            - **Japanese**: "こんにちは、お元気ですか。"
+            
+            ### Emotion Control (Original & Multilingual):
             - **Low exaggeration (0.0-0.3)**: Calm, professional tone
             - **Medium exaggeration (0.4-0.6)**: Natural, conversational
             - **High exaggeration (0.7-1.0)**: Expressive, dramatic
             
-            ### CFG Scale:
+            ### CFG Scale (Original & Multilingual):
             - **Low CFG (0.0-0.3)**: Slower, more deliberate speech
             - **Medium CFG (0.4-0.6)**: Balanced pacing
             - **High CFG (0.7-1.0)**: Faster, more natural rhythm
+            
+            ### Model Selection Guide:
+            - **Turbo**: Best for real-time voice agents, fastest generation, lowest VRAM
+            - **Multilingual**: Use when you need non-English languages
+            - **Original**: Best overall quality with fine-tuned emotion control
             """)
         
         # About Tab
@@ -220,10 +345,20 @@ with gr.Blocks(
             gr.Markdown(f"""
             ## About Chatterbox TTS
             
-            **Chatterbox** is an open-source text-to-speech model developed by Resemble AI.
+            **Chatterbox** is a family of three state-of-the-art, open-source text-to-speech models by Resemble AI.
+            
+            ### Model Family:
+            
+            | Model | Parameters | Features |
+            |-------|------------|----------|
+            | Chatterbox-Turbo | 350M | Paralinguistic tags, ultra-fast, low VRAM |
+            | Chatterbox-Multilingual | 500M | 23+ languages, zero-shot cloning |
+            | Chatterbox (Original) | 500M | CFG & exaggeration tuning, best quality |
             
             ### Features:
             - 🎭 **Voice Cloning**: Clone any voice with just 10 seconds of audio
+            - ⚡ **Turbo Mode**: Ultra-fast generation with paralinguistic tags
+            - 🌍 **23+ Languages**: Global language support
             - 🎨 **Emotion Control**: Adjust expressiveness and pacing
             - 🆓 **Free & Open Source**: MIT license, completely free to use
             - 🔒 **Privacy**: Runs completely locally on your machine
@@ -231,16 +366,22 @@ with gr.Blocks(
             
             ### Technical Details:
             - **Device**: {device}
-            - **Model**: Chatterbox TTS (Resemble AI)
+            - **Models**: Chatterbox TTS family (Resemble AI)
             - **Output Format**: WAV audio files
             - **Sample Rate**: Variable (model default)
+            
+            ### Built-in Watermarking:
+            All audio includes Resemble AI's Perth watermarker - imperceptible neural watermarks
+            for responsible AI use.
             
             ### Credits:
             - **Chatterbox TTS**: Resemble AI
             - **Integration**: Pinokio Community
             - **Interface**: Gradio
             
-            For more information, visit: [Resemble AI](https://www.resemble.ai/)
+            For more information, visit:
+            - [Resemble AI](https://www.resemble.ai/)
+            - [Chatterbox-Turbo on Hugging Face](https://huggingface.co/ResembleAI/chatterbox-turbo)
             """)
     
     # Event handlers
@@ -252,7 +393,7 @@ with gr.Blocks(
     
     generate_btn.click(
         fn=generate_speech,
-        inputs=[text_input, reference_audio, exaggeration, cfg_value, output_filename],
+        inputs=[model_selector, text_input, reference_audio, exaggeration, cfg_value, language_selector, output_filename],
         outputs=[output_audio, status_output]
     )
 
