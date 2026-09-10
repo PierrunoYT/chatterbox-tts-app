@@ -2,27 +2,28 @@ import gradio as gr
 import torchaudio as ta
 import devicetorch
 import torch
-import time
-import os
 import re
+from copy import deepcopy
+from uuid import uuid4
 from pathlib import Path
 
 # Output directory
-output_dir = Path("outputs")
+output_dir = Path(__file__).resolve().parent / "outputs"
 output_dir.mkdir(exist_ok=True)
 
 # Device detection
 device = devicetorch.get(torch)
 print(f"Using device: {device}")
 if str(device) == "cpu":
-    print("⚠️ Running on CPU — generation will be slow.")
+    print("Running on CPU - generation will be slow.")
 elif "cuda" in str(device):
     print(
-        f"✅ GPU: {torch.cuda.get_device_name(0)} ({torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB VRAM)"
+        f"GPU: {torch.cuda.get_device_name(0)} ({torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB VRAM)"
     )
 
 # Lazy model cache
 _models = {}
+_default_conditionals = {}
 
 
 def _get_model(key):
@@ -33,22 +34,23 @@ def _get_model(key):
     if key == "turbo":
         from chatterbox.tts_turbo import ChatterboxTurboTTS
 
-        print("⏳ Downloading & loading Chatterbox-Turbo …")
+        print("Downloading & loading Chatterbox-Turbo...")
         _models[key] = ChatterboxTurboTTS.from_pretrained(device)
     elif key == "multilingual":
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
-        print("⏳ Downloading & loading Chatterbox-Multilingual …")
+        print("Downloading & loading Chatterbox-Multilingual...")
         _models[key] = ChatterboxMultilingualTTS.from_pretrained(device)
     elif key == "original":
         from chatterbox.tts import ChatterboxTTS
 
-        print("⏳ Downloading & loading Chatterbox-Original …")
+        print("Downloading & loading Chatterbox-Original...")
         _models[key] = ChatterboxTTS.from_pretrained(device)
     else:
         raise ValueError(f"Unknown model key: {key}")
 
-    print(f"✅ {key.capitalize()} model loaded!")
+    _default_conditionals[key] = deepcopy(_models[key].conds)
+    print(f"{key.capitalize()} model loaded!")
     return _models[key]
 
 
@@ -83,6 +85,14 @@ def generate_speech(
         yield None, "❌ Invalid model selection."
         return
 
+    if model_key == "multilingual":
+        if language_code not in {code for _, code in LANGUAGES}:
+            yield None, "❌ Please select a supported language."
+            return
+        if len(text) > 300:
+            yield None, "❌ Multilingual text is limited to 300 characters. Please split it into shorter passages."
+            return
+
     # Show loading status if model isn't cached yet
     if model_key not in _models:
         yield (
@@ -115,11 +125,13 @@ def generate_speech(
         elif model_key == "multilingual":
             params.update(
                 exaggeration=exaggeration,
-                cfg_weight=max(cfg_value, 0.2),
+                cfg_weight=cfg_value,
                 temperature=temperature,
+                min_p=min_p,
+                top_p=top_p,
+                repetition_penalty=repetition_penalty,
+                language_id=language_code,
             )
-            if language_code and language_code != "auto":
-                params["language_id"] = language_code
         else:
             params.update(
                 exaggeration=exaggeration,
@@ -130,30 +142,47 @@ def generate_speech(
                 repetition_penalty=repetition_penalty,
             )
 
-        gen_text = text[:300] if model_key == "multilingual" else text
-        wav = model.generate(gen_text, **params)
+        # Chatterbox mutates voice conditioning when a reference is supplied.
+        # Every request starts from the built-in voice, including after failures.
+        model.conds = deepcopy(_default_conditionals[model_key])
+        try:
+            wav = model.generate(text, **params)
+        finally:
+            model.conds = None
 
         if wav.dim() == 1:
             wav = wav.unsqueeze(0)
 
-        if not output_filename:
-            output_filename = f"chatterbox_{model_key}_{int(time.time())}.wav"
-        # Strip any path components so user input can't escape output_dir (e.g. "../../x")
-        output_filename = Path(output_filename).name
-        # Strip characters that are invalid in Windows filenames
-        output_filename = re.sub(r'[<>:"|?*]', "_", output_filename)
-        if not output_filename or not output_filename.endswith(".wav"):
-            output_filename += ".wav"
-
-        output_path = output_dir / output_filename
-        if output_path.exists():
-            output_path = output_dir / f"{output_path.stem}_{int(time.time())}.wav"
-
-        ta.save(str(output_path), wav, model.sr)
+        output_path = save_audio(wav, model.sr, output_filename, model_key)
         yield str(output_path), f"✅ Saved as **{output_path.name}**"
 
     except Exception as e:
         yield None, f"❌ Generation error: {e}"
+
+
+def save_audio(wav, sample_rate, filename, model_key):
+    """Reserve a portable filename atomically so existing audio is never overwritten."""
+    name = (filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", name).strip(" .")
+    if name.lower().endswith(".wav"):
+        name = name[:-4].rstrip(" .")
+    name = name[:100] or f"chatterbox_{model_key}"
+    if re.match(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", name, re.I):
+        name = "_" + name
+    output_path = output_dir / f"{name}.wav"
+    while True:
+        try:
+            audio_file = output_path.open("xb")
+            break
+        except FileExistsError:
+            output_path = output_dir / f"{name}_{uuid4().hex}.wav"
+    try:
+        with audio_file:
+            ta.save(audio_file, wav.detach().cpu(), sample_rate, format="wav")
+    except Exception:
+        output_path.unlink(missing_ok=True)
+        raise
+    return output_path
 
 
 def get_audio_info(audio_file):
@@ -207,7 +236,6 @@ css = """
 """
 
 LANGUAGES = [
-    ("Auto-detect", "auto"),
     ("Arabic", "ar"),
     ("Chinese", "zh"),
     ("Danish", "da"),
@@ -234,7 +262,7 @@ LANGUAGES = [
 ]
 
 # ── UI ──────────────────────────────────────────────────────────────────────────
-with gr.Blocks(title="Chatterbox TTS", theme=gr.themes.Soft(), css=css) as app:
+with gr.Blocks(title="Chatterbox TTS") as app:
     # Header
     gr.HTML("""
     <div class="app-header">
@@ -257,7 +285,7 @@ with gr.Blocks(title="Chatterbox TTS", theme=gr.themes.Soft(), css=css) as app:
                     )
                     language_selector = gr.Dropdown(
                         choices=LANGUAGES,
-                        value="auto",
+                        value="en",
                         label="Language (Multilingual only)",
                         visible=False,
                     )
@@ -409,8 +437,10 @@ with gr.Blocks(title="Chatterbox TTS", theme=gr.themes.Soft(), css=css) as app:
             output_filename,
         ],
         outputs=[output_audio, status_output],
+        api_name="generate_speech",
+        concurrency_limit=1,
     )
 
 if __name__ == "__main__":
-    print(f"\n🚀 Chatterbox TTS · {device}")
-    app.launch(server_name="127.0.0.1", server_port=int(os.environ.get("GRADIO_SERVER_PORT", "7860")), show_error=True)
+    print(f"\nChatterbox TTS - {device}")
+    app.launch(server_name="127.0.0.1", theme=gr.themes.Soft(), css=css, show_error=True)

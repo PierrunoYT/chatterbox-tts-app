@@ -84,8 +84,8 @@ python app.py
 
 ### Multilingual Support
 1. Select "Chatterbox-Multilingual" model
-2. Enter text in any supported language (auto-detected)
-3. Optionally specify language code for better accuracy
+2. Enter text in any supported language (up to 300 characters)
+3. Select the language matching your text
 
 ## 🌍 Supported Languages (Multilingual Model)
 
@@ -172,7 +172,7 @@ result = client.predict(
     repetition_penalty=1.2,
     top_k=1000,
     norm_loudness=True,
-    language_code="auto",
+    language_code="en",
     output_filename="output.wav",
     api_name="/generate_speech",
 )
@@ -183,7 +183,7 @@ print(result)
 ### JavaScript (fetch)
 
 ```javascript
-const response = await fetch("http://127.0.0.1:7860/call/generate_speech", {
+const response = await fetch("http://127.0.0.1:7860/gradio_api/call/generate_speech", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -199,7 +199,7 @@ const response = await fetch("http://127.0.0.1:7860/call/generate_speech", {
       1.2,                           // repetition_penalty
       1000,                          // top_k
       true,                          // norm_loudness
-      "auto",                        // language_code
+      "en",                        // language_code
       "output.wav"                   // output_filename
     ]
   })
@@ -207,7 +207,7 @@ const response = await fetch("http://127.0.0.1:7860/call/generate_speech", {
 const { event_id } = await response.json();
 
 // Poll for result
-const resultResponse = await fetch(`http://127.0.0.1:7860/call/generate_speech/${event_id}`);
+const resultResponse = await fetch(`http://127.0.0.1:7860/gradio_api/call/generate_speech/${event_id}`);
 const text = await resultResponse.text();
 console.log(text);
 ```
@@ -216,16 +216,16 @@ console.log(text);
 
 ```bash
 # Submit the request
-EVENT_ID=$(curl -s -X POST http://127.0.0.1:7860/call/generate_speech \
+EVENT_ID=$(curl -s -X POST http://127.0.0.1:7860/gradio_api/call/generate_speech \
   -H "Content-Type: application/json" \
   -d '{
     "data": [
       "⚡ Turbo (Fastest, English)",
       "Hello, this is a test.",
-      null, 0.5, 0.5, 0.8, 0.05, 0.95, 1.2, 1000, true, "auto", "output.wav"
+      null, 0.5, 0.5, 0.8, 0.05, 0.95, 1.2, 1000, true, "en", "output.wav"
     ]
   }' | python3 -c "import sys,json; print(json.load(sys.stdin)['event_id'])")
 
 # Retrieve the result
-curl -s http://127.0.0.1:7860/call/generate_speech/$EVENT_ID
+curl -s http://127.0.0.1:7860/gradio_api/call/generate_speech/$EVENT_ID
 ```
