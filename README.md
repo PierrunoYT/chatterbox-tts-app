@@ -28,8 +28,9 @@ Chatterbox is a family of three state-of-the-art, open-source text-to-speech mod
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.10–3.13 (Pinokio creates a Python 3.11 environment)
 - CUDA-compatible GPU (recommended) or CPU
+- Windows, Linux, or Apple Silicon macOS. Intel Macs are unsupported by the required PyTorch version. AMD on Windows uses CPU; supported AMD GPUs on Linux use ROCm.
 
 ### Installation
 
@@ -42,7 +43,10 @@ cd chatterbox-tts-pinokio
 2. Install dependencies:
 ```bash
 cd app
-pip install -r requirements.txt
+python -m venv env
+# Windows: env\Scripts\activate
+# macOS/Linux: source env/bin/activate
+python -m pip install -r requirements.txt
 ```
 > **Note:** This installs a default `torch` build only. For GPU acceleration (NVIDIA/AMD), install the matching `torch` build for your platform afterward — see the `when` blocks in `torch.js` at the repo root for the exact commands per platform. The Pinokio install flow (`install.js`) does this automatically.
 
@@ -54,11 +58,12 @@ Or set `HF_TOKEN` in the `env` block of `start.js` (there's a commented-out exam
 
 4. Run the application:
 ```bash
-cd app
 python app.py
 ```
 
-5. Open your browser and go to `http://127.0.0.1:7860`
+5. Open the local URL printed in the terminal. Gradio chooses an available port starting at 7860.
+
+In Pinokio, use **Install**, then **Start**. **Update** pulls launcher changes and reruns installation. If installation fails, **Reset incomplete installation** removes the environment so you can retry; generated audio is retained.
 
 ## 🎯 Usage
 
@@ -134,6 +139,10 @@ chatterbox-tts-pinokio/
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+Run the regression checks with `python -m unittest discover -s tests -v` and `node --test tests/launchers.test.js`. Python tests require Gradio 6.8.0 and stub model inference, so no model download or GPU is needed.
+
+With the full dependencies installed, `python tests/smoke_runtime.py` checks model imports, WAV round-trip, localhost startup, and a queued API validation request without downloading weights. GPU inference and speech quality require separate testing with the models.
 
 ## 📄 License
 

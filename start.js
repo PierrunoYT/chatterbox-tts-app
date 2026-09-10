@@ -8,7 +8,7 @@ module.exports = {
         venv: "env",                // Edit this to customize the venv folder path
         path: "app",
         env: {
-          GRADIO_SERVER_PORT: "{{port}}"
+          GRADIO_SERVER_NAME: "127.0.0.1",
           // HF_TOKEN: "hf_xxx"  // Uncomment and set your token here for gated models (see README)
         },                   // Edit this to customize environment variables (see documentation)
         message: [
@@ -16,7 +16,7 @@ module.exports = {
         ],
         on: [{
           // Generic URL capture (see gepeto skill / PINOKIO.md); group 1 → input.event[1] for local.set
-          "event": "/(http:\\/\\/\\S+)/",
+          "event": "/(http:\\/\\/[0-9.:]+)/",
           "done": true
         }]
       }

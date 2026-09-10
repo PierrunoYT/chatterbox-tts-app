@@ -1,7 +1,7 @@
 module.exports = {
   version: "5.0",
   menu: async (kernel, info) => {
-    let installed = info.exists("installed.flag")
+    let installed = info.exists("installed.flag") && info.exists("app/env")
     let running = {
       install: info.running("install.js"),
       start: info.running("start.js"),
@@ -15,6 +15,13 @@ module.exports = {
         icon: "fa-solid fa-plug",
         text: "Installing",
         href: "install.js",
+      }]
+    } else if (running.update || running.reset) {
+      return [{
+        default: true,
+        icon: "fa-solid fa-terminal",
+        text: running.update ? "Updating" : "Resetting",
+        href: running.update ? "update.js" : "reset.js",
       }]
     } else if (installed) {
       if (running.start) {
@@ -38,20 +45,6 @@ module.exports = {
             href: "start.js",
           }]
         }
-      } else if (running.update) {
-        return [{
-          default: true,
-          icon: 'fa-solid fa-terminal',
-          text: "Updating",
-          href: "update.js",
-        }]
-      } else if (running.reset) {
-        return [{
-          default: true,
-          icon: 'fa-solid fa-terminal',
-          text: "Resetting",
-          href: "reset.js",
-        }]
       } else if (running.link) {
         return [{
           default: true,
@@ -91,7 +84,12 @@ module.exports = {
         icon: "fa-solid fa-plug",
         text: "Install",
         href: "install.js",
-      }]
+      }, ...(info.exists("app/env") ? [{
+        icon: "fa-regular fa-circle-xmark",
+        text: "Reset incomplete installation",
+        href: "reset.js",
+        confirm: "Remove the incomplete environment and reinstall?"
+      }] : [])]
     }
   }
 }
